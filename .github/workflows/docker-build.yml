@@ -39,6 +39,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./core/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ steps.vars.outputs.lower_owner }}/qq-farm-bot-ui:latest
