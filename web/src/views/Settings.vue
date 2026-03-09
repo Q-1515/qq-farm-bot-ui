@@ -7,6 +7,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
+import BaseTextarea from '@/components/ui/BaseTextarea.vue'
 import { useAccountStore } from '@/stores/account'
 import { useFarmStore } from '@/stores/farm'
 import { useSettingStore } from '@/stores/setting'
@@ -47,6 +48,28 @@ const currentAccountName = computed(() => {
   const acc = accounts.value.find((a: any) => a.id === currentAccountId.value)
   return acc ? (acc.name || acc.nick || acc.id) : null
 })
+const allFertilizerLandTypes = ['gold', 'black', 'red', 'normal']
+
+const fertilizerLandTypeOptions = [
+  { label: '金土地', value: 'gold' },
+  { label: '黑土地', value: 'black' },
+  { label: '红土地', value: 'red' },
+  { label: '普通土地', value: 'normal' },
+]
+
+function normalizeFertilizerLandTypes(input: unknown) {
+  const source = Array.isArray(input) ? input : allFertilizerLandTypes
+  const normalized: string[] = []
+  for (const item of source) {
+    const value = String(item || '').trim().toLowerCase()
+    if (!allFertilizerLandTypes.includes(value))
+      continue
+    if (normalized.includes(value))
+      continue
+    normalized.push(value)
+  }
+  return normalized
+}
 
 const localSettings = ref({
   plantingStrategy: 'preferred',
@@ -77,6 +100,8 @@ const localSettings = ref({
     month_card: false,
     open_server_gift: false,
     fertilizer: 'none',
+    fertilizer_multi_season: false,
+    fertilizer_land_types: [...allFertilizerLandTypes],
   },
 })
 
@@ -90,7 +115,9 @@ const localOffline = ref({
   token: '',
   title: '',
   msg: '',
-  offlineDeleteSec: 120,
+  offlineDeleteSec: 9999999999,
+  custom_headers: '',
+  custom_body: '',
 })
 
 const localQrLogin = ref({
@@ -139,6 +166,8 @@ function syncLocalSettings() {
         month_card: false,
         open_server_gift: false,
         fertilizer: 'none',
+        fertilizer_multi_season: false,
+        fertilizer_land_types: [...allFertilizerLandTypes],
       }
     }
     else {
@@ -167,12 +196,16 @@ function syncLocalSettings() {
         month_card: false,
         open_server_gift: false,
         fertilizer: 'none',
+        fertilizer_multi_season: false,
+        fertilizer_land_types: [...allFertilizerLandTypes],
       }
       localSettings.value.automation = {
         ...defaults,
         ...localSettings.value.automation,
       }
     }
+
+    localSettings.value.automation.fertilizer_land_types = normalizeFertilizerLandTypes(localSettings.value.automation.fertilizer_land_types)
 
     // Sync offline settings (global)
     if (settings.value.offlineReminder) {
@@ -219,6 +252,7 @@ const plantingStrategyOptions = [
 
 const channelOptions = [
   { label: 'Webhook(自定义接口)', value: 'webhook' },
+  { label: '自定义 JSON (Webhook)', value: 'custom_request' },
   { label: 'Qmsg 酱', value: 'qmsg' },
   { label: 'Server 酱', value: 'serverchan' },
   { label: 'Push Plus', value: 'pushplus' },
@@ -241,6 +275,7 @@ const channelOptions = [
 
 const CHANNEL_DOCS: Record<string, string> = {
   webhook: '',
+  custom_request: '',
   qmsg: 'https://qmsg.zendee.cn/',
   serverchan: 'https://sct.ftqq.com/',
   pushplus: 'https://www.pushplus.plus/',
@@ -587,15 +622,43 @@ async function handleTestOffline() {
             <BaseSwitch v-model="localSettings.automation.friend_bad" label="自动捣乱" :disabled="friendDisabled" />
             <BaseSwitch v-model="localSettings.automation.friend_help_exp_limit" label="经验上限停止帮忙" :disabled="friendDisabled" />
           </div>
-
           <!-- Fertilizer -->
-          <div>
-            <BaseSelect
-              v-model="localSettings.automation.fertilizer"
-              label="施肥策略"
-              class="w-full md:w-1/2"
-              :options="fertilizerOptions"
-            />
+          <div class="space-y-3">
+            <div class="border border-amber-200 rounded bg-amber-50/60 p-3 dark:border-amber-800/60 dark:bg-amber-900/10">
+              <div class="mb-2 text-sm text-amber-800 font-medium dark:text-amber-300">
+                施肥范围
+              </div>
+              <div class="grid grid-cols-2 gap-2 md:grid-cols-4">
+                <label
+                  v-for="option in fertilizerLandTypeOptions"
+                  :key="option.value"
+                  class="flex cursor-pointer items-center gap-1.5 rounded bg-white px-2 py-1 text-xs text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                >
+                  <input
+                    v-model="localSettings.automation.fertilizer_land_types"
+                    :value="option.value"
+                    type="checkbox"
+                    class="h-3.5 w-3.5"
+                  >
+                  <span>{{ option.label }}</span>
+                </label>
+              </div>
+              <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                施肥前会优先按土地类型过滤，仅对命中范围的地块执行施肥策略。
+              </p>
+            </div>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+              <BaseSelect
+                v-model="localSettings.automation.fertilizer"
+                label="施肥策略"
+                class="w-full"
+                :options="fertilizerOptions"
+              />
+              <BaseSwitch
+                v-model="localSettings.automation.fertilizer_multi_season"
+                label="多季补肥"
+              />
+            </div>
           </div>
         </div>
 
@@ -743,7 +806,7 @@ async function handleTestOffline() {
             v-model="localOffline.endpoint"
             label="接口地址"
             type="text"
-            :disabled="localOffline.channel !== 'webhook'"
+            :disabled="localOffline.channel !== 'webhook' && localOffline.channel !== 'custom_request'"
           />
 
           <BaseInput
@@ -765,7 +828,7 @@ async function handleTestOffline() {
               label="离线删除账号 (秒)"
               type="number"
               min="1"
-              placeholder="默认 120"
+              placeholder="默认 9999999999"
             />
           </div>
 
@@ -775,6 +838,19 @@ async function handleTestOffline() {
             type="text"
             placeholder="提醒内容"
           />
+
+          <template v-if="localOffline.channel === 'custom_request'">
+            <BaseTextarea
+              v-model="localOffline.custom_headers"
+              label="Headers (严格 JSON)"
+              placeholder="例如: {&quot;Content-Type&quot;: &quot;application/json&quot;, &quot;Authorization&quot;: &quot;Bearer TOKEN&quot;}"
+            />
+            <BaseTextarea
+              v-model="localOffline.custom_body"
+              label="Body (严格 JSON, 占位符支持 {{title}}（标题） {{content}}（内容）)"
+              placeholder="例如: { &quot;title&quot;: &quot;{{title}}&quot;, &quot;message&quot;: &quot;{{content}}&quot; }"
+            />
+          </template>
         </div>
 
         <!-- Save Offline Button -->
