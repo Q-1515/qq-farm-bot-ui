@@ -8,7 +8,7 @@ const { readTextFile, readJsonFile, writeJsonFileAtomic } = require('../services
 
 const STORE_FILE = getDataFile('store.json');
 const ACCOUNTS_FILE = getDataFile('accounts.json');
-const ALLOWED_PLANTING_STRATEGIES = ['preferred', 'level', 'max_exp', 'max_fert_exp', 'max_profit', 'max_fert_profit'];
+const ALLOWED_PLANTING_STRATEGIES = ['preferred', 'level', 'max_exp', 'max_fert_exp', 'max_profit', 'max_fert_profit', 'bag_priority'];
 const PUSHOO_CHANNELS = new Set([
     'webhook', 'qmsg', 'serverchan', 'pushplus', 'pushplushxtrip',
     'dingtalk', 'wecom', 'bark', 'gocqhttp', 'onebot', 'atri',
@@ -17,9 +17,10 @@ const PUSHOO_CHANNELS = new Set([
     'custom_request',
 ]);
 const INTERVAL_MAX_SEC = 86400;
-const DEFAULT_OFFLINE_DELETE_SEC = 9999999999;
+const DEFAULT_OFFLINE_DELETE_SEC = 1;
 const DEFAULT_FERTILIZER_LAND_TYPES = ['gold', 'black', 'red', 'normal'];
 const FERTILIZER_LAND_TYPE_SET = new Set(DEFAULT_FERTILIZER_LAND_TYPES);
+const DEFAULT_STEAL_PLANT_BLACKLIST = [];
 const DEFAULT_OFFLINE_REMINDER = {
     channel: 'webhook',
     reloginUrlMode: 'none',
@@ -28,6 +29,7 @@ const DEFAULT_OFFLINE_REMINDER = {
     title: '账号下线提醒',
     msg: '账号下线',
     offlineDeleteSec: DEFAULT_OFFLINE_DELETE_SEC,
+    offlineDeleteEnabled: false,
     custom_headers: '',
     custom_body: '',
 };
@@ -48,6 +50,7 @@ const DEFAULT_ACCOUNT_CONFIG = {
         friend: true,       // 好友互动总开关
         friend_help_exp_limit: true, // 帮忙经验达上限后自动停止帮忙
         friend_steal: true, // 偷菜
+        friend_steal_blacklist: [...DEFAULT_STEAL_PLANT_BLACKLIST], // 偷菜作物黑名单（按作物ID）
         friend_help: true,  // 帮忙
         friend_bad: false,  // 捣乱(放虫草)
         task: true,
@@ -66,6 +69,7 @@ const DEFAULT_ACCOUNT_CONFIG = {
     },
     plantingStrategy: 'preferred',
     preferredSeedId: 0,
+    bagSeedPriority: [],
     intervals: {
         farm: 2,
         friend: 10,
@@ -85,7 +89,11 @@ const ALLOWED_AUTOMATION_KEYS = new Set(Object.keys(DEFAULT_ACCOUNT_CONFIG.autom
 
 let accountFallbackConfig = {
     ...DEFAULT_ACCOUNT_CONFIG,
-    automation: { ...DEFAULT_ACCOUNT_CONFIG.automation, fertilizer_land_types: [...DEFAULT_FERTILIZER_LAND_TYPES] },
+    automation: {
+        ...DEFAULT_ACCOUNT_CONFIG.automation,
+        fertilizer_land_types: [...DEFAULT_FERTILIZER_LAND_TYPES],
+        friend_steal_blacklist: [...DEFAULT_STEAL_PLANT_BLACKLIST],
+    },
     intervals: { ...DEFAULT_ACCOUNT_CONFIG.intervals },
     friendQuietHours: { ...DEFAULT_ACCOUNT_CONFIG.friendQuietHours },
 };
@@ -135,6 +143,9 @@ function normalizeOfflineReminder(input) {
     const msg = (src.msg !== undefined && src.msg !== null)
         ? String(src.msg).trim()
         : DEFAULT_OFFLINE_REMINDER.msg;
+    const offlineDeleteEnabled = src.offlineDeleteEnabled !== undefined
+        ? !!src.offlineDeleteEnabled
+        : !!DEFAULT_OFFLINE_REMINDER.offlineDeleteEnabled;
     const custom_headers = (src.custom_headers !== undefined && src.custom_headers !== null)
         ? String(src.custom_headers).trim()
         : DEFAULT_OFFLINE_REMINDER.custom_headers;
@@ -149,6 +160,7 @@ function normalizeOfflineReminder(input) {
         title,
         msg,
         offlineDeleteSec,
+        offlineDeleteEnabled,
         custom_headers,
         custom_body,
     };
@@ -187,6 +199,30 @@ function normalizeFertilizerLandTypes(input, fallback = DEFAULT_FERTILIZER_LAND_
     return normalized;
 }
 
+function normalizeStealPlantBlacklist(input, fallback = DEFAULT_STEAL_PLANT_BLACKLIST) {
+    const source = Array.isArray(input) ? input : fallback;
+    const normalized = [];
+    for (const item of source) {
+        const value = Number.parseInt(item, 10);
+        if (!Number.isFinite(value) || value <= 0) continue;
+        if (normalized.includes(value)) continue;
+        normalized.push(value);
+    }
+    return normalized;
+}
+
+function normalizeBagSeedPriority(input) {
+    if (!Array.isArray(input)) return [];
+    const normalized = [];
+    for (const item of input) {
+        const value = Number.parseInt(item, 10);
+        if (!Number.isFinite(value) || value <= 0) continue;
+        if (normalized.includes(value)) continue;
+        normalized.push(value);
+    }
+    return normalized;
+}
+
 function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
     const srcAutomation = (base && base.automation && typeof base.automation === 'object')
         ? base.automation
@@ -195,6 +231,10 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
     for (const key of Object.keys(automation)) {
         if (key === 'fertilizer_land_types') {
             automation[key] = normalizeFertilizerLandTypes(srcAutomation[key], DEFAULT_FERTILIZER_LAND_TYPES);
+            continue;
+        }
+        if (key === 'friend_steal_blacklist') {
+            automation[key] = normalizeStealPlantBlacklist(srcAutomation[key], DEFAULT_STEAL_PLANT_BLACKLIST);
             continue;
         }
         if (srcAutomation[key] !== undefined) automation[key] = srcAutomation[key];
@@ -211,6 +251,7 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
             ? String(base.plantingStrategy)
             : DEFAULT_ACCOUNT_CONFIG.plantingStrategy,
         preferredSeedId: Math.max(0, Number.parseInt(base.preferredSeedId, 10) || 0),
+        bagSeedPriority: normalizeBagSeedPriority(base.bagSeedPriority),
     };
 }
 
@@ -233,6 +274,8 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
                 cfg.automation[k] = allowed.includes(v) ? v : cfg.automation[k];
             } else if (k === 'fertilizer_land_types') {
                 cfg.automation[k] = normalizeFertilizerLandTypes(v, cfg.automation[k]);
+            } else if (k === 'friend_steal_blacklist') {
+                cfg.automation[k] = normalizeStealPlantBlacklist(v, cfg.automation[k]);
             } else {
                 cfg.automation[k] = !!v;
             }
@@ -245,6 +288,10 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
 
     if (src.preferredSeedId !== undefined && src.preferredSeedId !== null) {
         cfg.preferredSeedId = Math.max(0, Number.parseInt(src.preferredSeedId, 10) || 0);
+    }
+
+    if (src.bagSeedPriority !== undefined) {
+        cfg.bagSeedPriority = normalizeBagSeedPriority(src.bagSeedPriority);
     }
 
     if (src.intervals && typeof src.intervals === 'object') {
@@ -409,6 +456,7 @@ loadGlobalConfig();
 function getAutomation(accountId) {
     const automation = { ...getAccountConfigSnapshot(accountId).automation };
     automation.fertilizer_land_types = normalizeFertilizerLandTypes(automation.fertilizer_land_types);
+    automation.friend_steal_blacklist = normalizeStealPlantBlacklist(automation.friend_steal_blacklist);
     return automation;
 }
 
@@ -442,6 +490,8 @@ function applyConfigSnapshot(snapshot, options = {}) {
                 next.automation[k] = allowed.includes(v) ? v : next.automation[k];
             } else if (k === 'fertilizer_land_types') {
                 next.automation[k] = normalizeFertilizerLandTypes(v, next.automation[k]);
+            } else if (k === 'friend_steal_blacklist') {
+                next.automation[k] = normalizeStealPlantBlacklist(v, next.automation[k]);
             } else {
                 next.automation[k] = !!v;
             }
@@ -454,6 +504,10 @@ function applyConfigSnapshot(snapshot, options = {}) {
 
     if (cfg.preferredSeedId !== undefined && cfg.preferredSeedId !== null) {
         next.preferredSeedId = Math.max(0, Number.parseInt(cfg.preferredSeedId, 10) || 0);
+    }
+
+    if (cfg.bagSeedPriority !== undefined) {
+        next.bagSeedPriority = normalizeBagSeedPriority(cfg.bagSeedPriority);
     }
 
     if (cfg.intervals && typeof cfg.intervals === 'object') {
@@ -503,6 +557,16 @@ function getPreferredSeed(accountId) {
 
 function getPlantingStrategy(accountId) {
     return getAccountConfigSnapshot(accountId).plantingStrategy;
+}
+
+function getBagSeedPriority(accountId) {
+    return [...(getAccountConfigSnapshot(accountId).bagSeedPriority || [])];
+}
+
+function setPlantingStrategy(accountId, strategy) {
+    if (!ALLOWED_PLANTING_STRATEGIES.includes(strategy)) return false;
+    applyConfigSnapshot({ plantingStrategy: strategy }, { accountId });
+    return true;
 }
 
 function getIntervals(accountId) {
@@ -672,6 +736,8 @@ module.exports = {
     isAutomationOn,
     getPreferredSeed,
     getPlantingStrategy,
+    getBagSeedPriority,
+    setPlantingStrategy,
     getIntervals,
     getFriendQuietHours,
     getFriendBlacklist,

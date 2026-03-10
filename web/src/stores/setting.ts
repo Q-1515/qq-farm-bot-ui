@@ -17,6 +17,7 @@ export interface AutomationConfig {
   fertilizer_multi_season?: boolean
   fertilizer_land_types?: string[]
   friend_steal?: boolean
+  friend_steal_blacklist?: number[]
   friend_help?: boolean
   friend_bad?: boolean
   open_server_gift?: boolean
@@ -45,6 +46,7 @@ export interface OfflineConfig {
   title: string
   msg: string
   offlineDeleteSec: number
+  offlineDeleteEnabled: boolean
   custom_headers?: string
   custom_body?: string
 }
@@ -57,9 +59,19 @@ export interface QrLoginConfig {
   apiDomain: string
 }
 
+export interface BagSeed {
+  seedId: number
+  name: string
+  count: number
+  requiredLevel: number
+  image: string
+  plantSize: number
+}
+
 export interface SettingsState {
   plantingStrategy: string
   preferredSeedId: number
+  bagSeedPriority: number[]
   intervals: IntervalsConfig
   friendQuietHours: FriendQuietHoursConfig
   automation: AutomationConfig
@@ -72,6 +84,7 @@ export const useSettingStore = defineStore('setting', () => {
   const settings = ref<SettingsState>({
     plantingStrategy: 'preferred',
     preferredSeedId: 0,
+    bagSeedPriority: [],
     intervals: {},
     friendQuietHours: { enabled: false, start: '23:00', end: '07:00' },
     automation: {},
@@ -83,7 +96,8 @@ export const useSettingStore = defineStore('setting', () => {
       token: '',
       title: '账号下线提醒',
       msg: '账号下线',
-      offlineDeleteSec: 9999999999,
+      offlineDeleteSec: 1,
+      offlineDeleteEnabled: false,
       custom_headers: '',
       custom_body: '',
     },
@@ -105,6 +119,7 @@ export const useSettingStore = defineStore('setting', () => {
         const d = data.data
         settings.value.plantingStrategy = d.strategy || 'preferred'
         settings.value.preferredSeedId = d.preferredSeed || 0
+        settings.value.bagSeedPriority = Array.isArray(d.bagSeedPriority) ? d.bagSeedPriority : []
         settings.value.intervals = d.intervals || {}
         settings.value.friendQuietHours = d.friendQuietHours || { enabled: false, start: '23:00', end: '07:00' }
         settings.value.automation = d.automation || {}
@@ -116,7 +131,8 @@ export const useSettingStore = defineStore('setting', () => {
           token: '',
           title: '账号下线提醒',
           msg: '账号下线',
-          offlineDeleteSec: 9999999999,
+          offlineDeleteSec: 1,
+          offlineDeleteEnabled: false,
           custom_headers: '',
           custom_body: '',
           ...(d.offlineReminder || {}),
@@ -140,6 +156,7 @@ export const useSettingStore = defineStore('setting', () => {
       const settingsPayload = {
         plantingStrategy: newSettings.plantingStrategy,
         preferredSeedId: newSettings.preferredSeedId,
+        bagSeedPriority: newSettings.bagSeedPriority,
         intervals: newSettings.intervals,
         friendQuietHours: newSettings.friendQuietHours,
       }
